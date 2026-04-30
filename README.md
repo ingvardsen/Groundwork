@@ -1,7 +1,6 @@
 # Groundwork
 
-**"A Claude Code skill for iterative agent campaigns. Sessions end; the audit trail doesn't."
-**
+**A Claude Code skill for iterative agent campaigns. Sessions end; the audit trail doesn't**
 
 ---
 
