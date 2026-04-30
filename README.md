@@ -14,6 +14,42 @@ The same mechanism that makes work resumable makes it **auditable, shareable, an
 
 ---
 
+## Starting a session
+
+### Invoke the skill
+
+In a Claude Code session, either type the slash command:
+
+```
+/groundwork-skill
+```
+
+Or just describe what you want — Claude will auto-load the skill when it detects a multi-iteration task ("run a sweep across X", "compare A vs B", "audit Z and produce findings").
+
+### What Claude asks at the start
+
+Once the skill is loaded, Claude (as architect) confirms three things before writing the first brief:
+
+1. **Iterations directory** — where brief/return files live (default: `iterations/`)
+2. **Category** — shapes the brief template: `audit-sweep` · `comparative-rnd` · `bulk-migration` · `diagnostic`
+3. **Resource budget** — default wall-time cap per iteration in seconds
+
+The architect model is whatever your Claude Code session is running. Engineer subagents default to `sonnet` unless a brief's `Model:` field overrides it.
+
+### Resuming an existing campaign
+
+Start a new session, load the skill, and tell Claude the iterations directory. It reads the existing brief/return files and picks up from the last completed slot — no re-explaining context.
+
+### Campaign mode (architect as subagent)
+
+For fully autonomous campaigns where you supervise from outside, spawn an architect subagent and hand it `templates/architect_role.md` as its role:
+
+> "Your role: [paste contents of `templates/architect_role.md`]. Campaign: iterations dir = `iterations/`, category = `diagnostic`, goal = `<one paragraph>`, stop condition = `<when done>`."
+
+The subagent runs the campaign loop and reports back to you for approval after each return.
+
+---
+
 ## How it works
 
 Two roles, one filesystem contract:
