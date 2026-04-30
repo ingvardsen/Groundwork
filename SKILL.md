@@ -69,6 +69,7 @@ Decision is binary: "Can this be done in one Bash call under 30 seconds?" Yes â†
 Agent({
   subagent_type: "general-purpose",
   description: "Execute <NNN>_<slug>",
+  model: <brief's Model field, default "sonnet">,
   prompt: <contents of templates/engineer_role.md>
           + "\n\nBrief: <iterations-dir>/brief_<NNN>_<slug>.md",
 })
@@ -80,6 +81,7 @@ Agent({
 Agent({
   subagent_type: "general-purpose",
   description: "Execute <NNN>_<slug>",
+  model: <brief's Model field, default "sonnet">,
   prompt: <contents of templates/engineer_role.md>
           + "\n\nBrief: <iterations-dir>/brief_<NNN>_<slug>.md",
 })

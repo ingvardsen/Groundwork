@@ -14,6 +14,8 @@
 
 **Mode:** direct | supervised | ingest
 
+**Model:** sonnet | opus | haiku  *(default: sonnet — override only for high-complexity iterations)*
+
 <!-- Category-specific sections — uncomment / fill what applies -->
 
 <!-- Audit / sweep:
