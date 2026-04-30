@@ -1,6 +1,7 @@
 # Groundwork
 
-**Structured iteration with a filesystem audit trail — so any session can pick up exactly where the last one left off.**
+**"A Claude Code skill for iterative agent campaigns. Sessions end; the audit trail doesn't."
+**
 
 ---
 
