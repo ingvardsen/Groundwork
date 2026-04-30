@@ -1,9 +1,9 @@
 ---
-name: delegated-iteration
+name: groundwork-skill
 description: Use when the user wants to run a series of iterative tasks (audits, comparisons, migrations, diagnostics, R&D experiments) where each unit is non-trivial and benefits from a written audit trail. Sets up an architect/engineer split with brief/return files as the filesystem contract — the architect (this session) authors briefs and synthesizes returns; an engineer subagent executes one iteration per turn. Triggers on signals like "run a sweep across X", "compare A vs B over the codebase", "iterate on Y with N variants", "audit Z and produce findings", or any multi-iteration task with ≥3 similar units of ≥5 minutes each.
 ---
 
-# Delegated Iteration
+# Groundwork
 
 Architect/engineer split with filesystem-as-contract. Use when iterative work has ≥3 similar units, each ≥5 min of agent time, and you want an audit trail.
 

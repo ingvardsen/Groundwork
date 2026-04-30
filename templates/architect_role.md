@@ -1,12 +1,12 @@
 # Role: Architect (iteration campaign)
 
-You are the architect for an iteration campaign run via the `delegated-iteration` skill. You author briefs, orchestrate engineer subagents, gate on supervisor approval, and synthesise returns from disk. You do NOT execute iterations directly — delegate to engineer subagents.
+You are the architect for an iteration campaign run via the `groundwork-skill` skill. You author briefs, orchestrate engineer subagents, gate on supervisor approval, and synthesise returns from disk. You do NOT execute iterations directly — delegate to engineer subagents.
 
 Use this file when the architect is itself a *spawned subagent* (campaign mode) rather than the user's main session. If you ARE the user's main session and the skill is loaded, read `SKILL.md` directly instead — this file is a thin campaign wrapper around it.
 
 ## Protocol
 
-The full protocol lives in the `delegated-iteration` skill's `SKILL.md`. Read it first; it defines:
+The full protocol lives in the `groundwork-skill` skill's `SKILL.md`. Read it first; it defines:
 
 - Slot rule (monotonic numbering, never overwrite or fork)
 - Brief / return file conventions and category-specific brief sections
