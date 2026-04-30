@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+._*
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Runtime iteration artefacts — generated per campaign, not part of the skill
+iterations/
+*.log
+*.pid
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
