@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""Groundwork CLI — single source of truth for the skill's deterministic plumbing.
+
+Subcommands:
+  supervise   Run the supervisor loop for a work script (was: bash supervisor template).
+  kill        Terminate supervisor + work and append a KILLED sentinel.
+  next-slot   Print next monotonic slot number for an iterations dir.
+  validate    Validate a brief or return file against the template-derived schema.
+  schema      Print the schema (required/optional fields, enum values) for brief or return.
+
+Templates at <skill>/templates/{brief,return}.md are the single source of truth
+for the schema; this CLI parses them at runtime.
+"""
+import argparse
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+TEMPLATES_DIR = ROOT / "templates"
+DEFAULT_POLL_INTERVAL = 15.0
+
+# ── Document parser (validates brief/return files) ───────────────────────────
+
+def doc_fields(content: str) -> set[str]:
+    """Lowercased field names from lines starting with **Field:**."""
+    return {m.group(1).rstrip(":").strip().lower()
+            for m in re.finditer(r"^\*\*([^*]+)\*\*", content, re.MULTILINE)}
+
+def doc_field_value(content: str, name: str) -> str | None:
+    """First non-whitespace token after a **Field:** marker. \\b prevents prefix collisions."""
+    m = re.search(rf"^\*\*{re.escape(name)}\b[^*]*\*\*\s*(\S+)",
+                  content, re.IGNORECASE | re.MULTILINE)
+    return m.group(1) if m else None
+
+# ── Template parser (derives the schema) ─────────────────────────────────────
+
+OPTIONAL_MARKER = re.compile(r"\*\([^)]*\)\*")  # *(optional)*, *(default: ...)*
+
+def _strip_html_comments(text: str) -> str:
+    return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+
+def _parse_field_lines(template: str) -> list[tuple[str, str]]:
+    out = []
+    for line in template.splitlines():
+        m = re.match(r"^\*\*([^*]+)\*\*", line)
+        if m:
+            name = m.group(1).rstrip(":").strip().lower()
+            out.append((name, line))
+    return out
+
+def _split_enum_values(line: str) -> list[str]:
+    after = re.sub(r"^\*\*[^*]+\*\*\s*", "", line)
+    after = OPTIONAL_MARKER.sub("", after).strip()
+    after = re.split(r"\s+—\s+|<!--", after)[0]
+    parts = [p.strip() for p in after.split("|")]
+    return [p for p in parts if p and "<" not in p]
+
+def load_schema() -> dict:
+    brief_t = _strip_html_comments((TEMPLATES_DIR / "brief.md").read_text())
+    return_t = _strip_html_comments((TEMPLATES_DIR / "return.md").read_text())
+    brief_lines = _parse_field_lines(brief_t)
+    return_lines = _parse_field_lines(return_t)
+    return {
+        "brief": {
+            "required": {n for n, l in brief_lines if not OPTIONAL_MARKER.search(l)},
+            "optional": {n for n, l in brief_lines if OPTIONAL_MARKER.search(l)},
+            "modes": set(_split_enum_values(
+                next(l for n, l in brief_lines if n == "mode"))),
+        },
+        "return": {
+            "required": {n for n, l in return_lines if not OPTIONAL_MARKER.search(l)},
+            "optional": {n for n, l in return_lines if OPTIONAL_MARKER.search(l)},
+            "statuses": set(_split_enum_values(
+                next(l for n, l in return_lines if n == "status"))),
+        },
+    }
+
+# ── supervise ────────────────────────────────────────────────────────────────
+
+def cmd_supervise(args) -> int:
+    work = Path(args.work)
+    log = Path(args.log)
+    if not work.exists():
+        print(f"groundwork supervise: work script not found: {work}", file=sys.stderr)
+        return 2
+    log.parent.mkdir(parents=True, exist_ok=True)
+    if args.job_pid_file:
+        Path(args.job_pid_file).parent.mkdir(parents=True, exist_ok=True)
+
+    with log.open("a") as logf:
+        proc = subprocess.Popen(
+            ["bash", str(work)], stdout=logf, stderr=subprocess.STDOUT)
+    if args.job_pid_file:
+        Path(args.job_pid_file).write_text(str(proc.pid))
+
+    start = time.monotonic()
+    while True:
+        try:
+            rc = proc.wait(timeout=args.poll_interval)
+            break
+        except subprocess.TimeoutExpired:
+            if time.monotonic() - start > args.max_secs:
+                try:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                except ProcessLookupError:
+                    pass
+                with log.open("a") as logf:
+                    logf.write(f"FAILED: wall-time budget exceeded ({args.max_secs}s)\n")
+                return 1
+
+    with log.open("a") as logf:
+        logf.write("DONE\n" if rc == 0 else "FAILED: work script exited non-zero\n")
+    return 0 if rc == 0 else 1
+
+# ── kill ─────────────────────────────────────────────────────────────────────
+
+def cmd_kill(args) -> int:
+    stem = Path(args.stem)
+    parent, name = stem.parent, stem.name
+    job_pid_file = parent / f"{name}_job.pid"
+    sup_pid_file = parent / f"{name}.pid"
+    log = parent / f"{name}.log"
+
+    signaled = []
+    for pid_file in (job_pid_file, sup_pid_file):
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                os.kill(pid, signal.SIGTERM)
+                signaled.append(pid)
+            except (ProcessLookupError, ValueError):
+                pass
+    parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a") as f:
+        f.write("KILLED by architect\n")
+    print(f"groundwork kill: signaled {signaled}, sentinel appended to {log}")
+    return 0
+
+# ── next-slot ────────────────────────────────────────────────────────────────
+
+def cmd_next_slot(args) -> int:
+    iter_dir = Path(args.iter_dir)
+    pattern = re.compile(r"^(?:brief|return)_(\d+)")
+    nums = []
+    if iter_dir.exists():
+        for p in iter_dir.iterdir():
+            m = pattern.match(p.name)
+            if m:
+                nums.append(int(m.group(1)))
+    next_n = max(nums) + 1 if nums else 1
+    print(f"{next_n:03d}")
+    return 0
+
+# ── validate ─────────────────────────────────────────────────────────────────
+
+def _infer_kind(name: str, override: str | None) -> str | None:
+    if override:
+        return override
+    if name.startswith("brief_"):
+        return "brief"
+    if name.startswith("return_"):
+        return "return"
+    return None
+
+def cmd_validate(args) -> int:
+    path = Path(args.file)
+    if not path.exists():
+        print(f"groundwork validate: not found: {path}", file=sys.stderr)
+        return 2
+    kind = _infer_kind(path.name, args.kind)
+    if kind is None:
+        print(f"groundwork validate: cannot infer kind from {path.name!r}; "
+              f"pass --kind brief|return", file=sys.stderr)
+        return 2
+
+    schema = load_schema()[kind]
+    content = path.read_text()
+    present = doc_fields(content)
+
+    issues = []
+    missing = sorted(schema["required"] - present)
+    if missing:
+        issues.append(f"missing required fields: {', '.join(missing)}")
+
+    if kind == "brief":
+        mode = doc_field_value(content, "Mode")
+        if mode is not None and mode not in schema["modes"]:
+            issues.append(f"invalid mode: {mode!r} "
+                          f"(expected one of {sorted(schema['modes'])})")
+    else:
+        status = doc_field_value(content, "Status")
+        if status is not None and status not in schema["statuses"]:
+            issues.append(f"invalid status: {status!r} "
+                          f"(expected one of {sorted(schema['statuses'])})")
+
+    if issues:
+        print(f"INVALID {path}", file=sys.stderr)
+        for issue in issues:
+            print(f"  - {issue}", file=sys.stderr)
+        return 1
+    print(f"OK {path}")
+    return 0
+
+# ── schema ───────────────────────────────────────────────────────────────────
+
+def cmd_schema(args) -> int:
+    spec = load_schema()[args.kind]
+    sections = ["required", "optional"] + (
+        ["modes"] if args.kind == "brief" else ["statuses"])
+    for section in sections:
+        print(section.upper())
+        for v in sorted(spec[section]):
+            print(v)
+    return 0
+
+# ── argparse wiring ──────────────────────────────────────────────────────────
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="groundwork", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("supervise",
+        help="run the supervisor loop for a work script")
+    s.add_argument("--work", required=True, help="path to the work script")
+    s.add_argument("--log", required=True, help="path to the log file (appended)")
+    s.add_argument("--max-secs", type=int, required=True, help="wall-time budget")
+    s.add_argument("--poll-interval", type=float, default=DEFAULT_POLL_INTERVAL,
+                   help=f"seconds between liveness checks (default {DEFAULT_POLL_INTERVAL})")
+    s.add_argument("--job-pid-file", help="path to write the work process PID")
+    s.set_defaults(func=cmd_supervise)
+
+    s = sub.add_parser("kill",
+        help="kill supervisor + work and append KILLED by architect to the log")
+    s.add_argument("stem", help="path stem, e.g. iterations/001_my-task")
+    s.set_defaults(func=cmd_kill)
+
+    s = sub.add_parser("next-slot",
+        help="print the next monotonic slot number (zero-padded to 3 digits)")
+    s.add_argument("iter_dir", help="iterations directory")
+    s.set_defaults(func=cmd_next_slot)
+
+    s = sub.add_parser("validate",
+        help="validate a brief or return file against the template-derived schema")
+    s.add_argument("file", help="path to brief_NNN_*.md or return_NNN_*.md")
+    s.add_argument("--kind", choices=["brief", "return"],
+                   help="override kind detection (default: inferred from filename)")
+    s.set_defaults(func=cmd_validate)
+
+    s = sub.add_parser("schema",
+        help="print the schema (required/optional/enum) for brief or return")
+    s.add_argument("kind", choices=["brief", "return"])
+    s.set_defaults(func=cmd_schema)
+
+    args = p.parse_args()
+    return args.func(args)
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -35,53 +35,25 @@ Brief carries `Mode: direct`. Work fits in a single Bash call under 30 seconds.
 
 Brief carries `Mode: supervised`. Work takes longer than 30 seconds or cannot be bounded.
 
-**Never run the work inline.** Write scripts, launch them detached, write a partial return, then end turn. The OS process runs on after your turn ends.
+**Never run the work inline.** Write the work script, launch the supervisor detached, write a partial return, then end turn. The OS process runs on after your turn ends.
 
 ### Steps
 
-1. Write `<iterations-dir>/NNN_slug_work.sh` — the complete self-contained work script.
-2. Write `<iterations-dir>/NNN_slug_supervisor.sh` using the template below — fill in `MAX_SECS` from the brief's resource budget.
-3. Make both executable: `chmod +x <iterations-dir>/NNN_slug_work.sh <iterations-dir>/NNN_slug_supervisor.sh`
-4. Launch the supervisor detached:
+1. Write `<iterations-dir>/NNN_slug_work.sh` — the complete self-contained work script. `chmod +x` it.
+2. Launch the supervisor detached, using the bundled CLI (`<skill>/bin/groundwork`):
    ```
-   nohup bash <iterations-dir>/NNN_slug_supervisor.sh >> <iterations-dir>/NNN_slug.log 2>&1 &
+   nohup <skill>/bin/groundwork supervise \
+     --work <iterations-dir>/NNN_slug_work.sh \
+     --log <iterations-dir>/NNN_slug.log \
+     --max-secs BUDGET \
+     --job-pid-file <iterations-dir>/NNN_slug_job.pid \
+     >> <iterations-dir>/NNN_slug.log 2>&1 &
    echo $! > <iterations-dir>/NNN_slug.pid
    ```
-5. Verify it started: `sleep 2 && kill -0 $(cat <iterations-dir>/NNN_slug.pid) && echo "running"`
-6. Write a **partial return**: supervisor PID path, job PID path, log path, kill command, expected completion time.
+3. Verify it started: `sleep 2 && kill -0 $(cat <iterations-dir>/NNN_slug.pid) && echo "running"`
+4. Write a **partial return**: supervisor PID path, job PID path, log path, kill command, expected completion time.
 
-### Supervisor script template
-
-```bash
-#!/usr/bin/env bash
-ITER_DIR="$(dirname "$0")"
-LOG="$ITER_DIR/NNN_slug.log"
-JOB_PID_FILE="$ITER_DIR/NNN_slug_job.pid"
-MAX_SECS=BUDGET
-
-bash "$ITER_DIR/NNN_slug_work.sh" >> "$LOG" 2>&1 &
-JOB_PID=$!
-echo "$JOB_PID" > "$JOB_PID_FILE"
-
-START=$(date +%s)
-while kill -0 "$JOB_PID" 2>/dev/null; do
-  sleep 15
-  if (( $(date +%s) - START > MAX_SECS )); then
-    kill "$JOB_PID" 2>/dev/null
-    echo "FAILED: wall-time budget exceeded (${MAX_SECS}s)" >> "$LOG"
-    exit 1
-  fi
-done
-
-wait "$JOB_PID"
-if (( $? == 0 )); then
-  echo "DONE" >> "$LOG"
-else
-  echo "FAILED: work script exited non-zero" >> "$LOG"
-fi
-```
-
-The last line of the log is always `DONE` or `FAILED: <reason>` — the architect's Monitor fires on this sentinel.
+The last line of the log is always `DONE` or `FAILED: <reason>` — the architect's Monitor fires on this sentinel. The CLI (`groundwork supervise --help`) documents the supervisor contract; do not re-implement it inline.
 
 ---
 

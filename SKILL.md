@@ -37,7 +37,7 @@ Architect/engineer split with filesystem-as-contract. Use when iterative work ha
 - Numbering monotonic: `001`, `002`, ...
 - Check next free before writing:
   ```
-  ls <iterations-dir>/ | grep -E "^(brief|return)_[0-9]+" | sort
+  <skill>/bin/groundwork next-slot <iterations-dir>
   ```
 - Next free = highest existing + 1. Never overwrite or fork.
 
@@ -100,10 +100,9 @@ Harness streams lines and fires a notification on `DONE` or `FAILED:` sentinel. 
 
 **Kill a running job:**
 ```
-kill $(cat <iterations-dir>/NNN_slug_job.pid) 2>/dev/null
-kill $(cat <iterations-dir>/NNN_slug.pid) 2>/dev/null
-echo "KILLED by architect" >> <iterations-dir>/NNN_slug.log
+<skill>/bin/groundwork kill <iterations-dir>/NNN_slug
 ```
+This terminates the work and supervisor processes and appends `KILLED by architect` to the log.
 
 **Interruption:** load `TaskStop` via ToolSearch to stop the engineer *subagent* only if it is still writing scripts. Once the engineer's turn has ended, the job runs as an OS process — use the kill commands above instead.
 
@@ -136,7 +135,17 @@ echo "KILLED by architect" >> <iterations-dir>/NNN_slug.log
 
 ## Files
 
+- `bin/groundwork` — CLI: supervisor lifecycle, kill, slot rule, schema validation. Single source of truth for deterministic plumbing. `groundwork --help` documents the surface.
 - `templates/brief.md` — brief schema (architect fills in per iteration)
 - `templates/return.md` — return schema (engineer fills in)
 - `templates/engineer_role.md` — engineer prompt block (paste verbatim into engineer subagent's prompt)
 - `templates/architect_role.md` — *only* used when the architect is itself a spawned subagent (campaign mode where the user supervises from outside). If you (the current session) are the architect, this file is `SKILL.md` itself; you don't need the wrapper.
+
+## Validating documents
+
+To check a brief or return file before/after iteration:
+```
+<skill>/bin/groundwork validate <iterations-dir>/brief_NNN_slug.md
+<skill>/bin/groundwork validate <iterations-dir>/return_NNN_slug.md
+```
+Exit 0 = valid. Exit 1 = invalid (missing required fields, invalid mode/status). The schema is derived from `templates/{brief,return}.md` at runtime.

@@ -1,215 +1,271 @@
 """
-Layer 2: schema validation for brief and return files.
-Tests the markdown field contract — not agent reasoning, just structure.
+Layer 2: schema validation via the bin/groundwork CLI.
+
+The CLI parses templates/{brief,return}.md at runtime; tests construct
+documents in tmp_path and assert on the CLI's exit code and diagnostics.
+Anchor tests pin the derived schema (parsed from `groundwork schema`) so a
+template edit forces a corresponding test edit.
 
 Run with: pytest tests/layer2.py -v
 """
-import re
-import textwrap
+import subprocess
+from pathlib import Path
+
 import pytest
 
-# ── Field extraction ──────────────────────────────────────────────────────────
+ROOT = Path(__file__).resolve().parent.parent
+GROUNDWORK = ROOT / "bin" / "groundwork"
+
+
+def gw(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([str(GROUNDWORK), *args],
+                          capture_output=True, text=True)
+
+
+def parse_schema(kind: str) -> dict[str, set[str]]:
+    r = gw("schema", kind)
+    assert r.returncode == 0, r.stderr
+    out: dict[str, set[str]] = {}
+    section: str | None = None
+    for line in r.stdout.splitlines():
+        if not line.strip():
+            continue
+        if line in ("REQUIRED", "OPTIONAL", "MODES", "STATUSES"):
+            section = line.lower()
+            out[section] = set()
+        elif section is not None:
+            out[section].add(line)
+    return out
 
-def fields(content: str) -> set[str]:
-    """Return lowercased field names (colon stripped) from lines starting with **Field:**."""
-    return {m.group(1).rstrip(":").lower()
-            for m in re.finditer(r"^\*\*([^*]+)\*\*", content, re.MULTILINE)}
 
-def field_value(content: str, name: str) -> str | None:
-    """Return first word after a **Field:** line, or None if absent."""
-    m = re.search(rf"^\*\*{re.escape(name)}[^*]*\*\*\s*(\S+)", content, re.IGNORECASE | re.MULTILINE)
-    return m.group(1) if m else None
+BRIEF_SCHEMA = parse_schema("brief")
+RETURN_SCHEMA = parse_schema("return")
 
-BRIEF_REQUIRED = {"intention", "hypothesis", "scope fence", "expected artefacts",
-                  "resource budget", "return trigger", "mode"}
-RETURN_REQUIRED = {"status", "verdict", "mechanism", "artefacts", "surprises", "resource used"}
+# Canonical field order for round-trip construction. Pulled from the templates
+# implicitly via BRIEF_SCHEMA["required"] | BRIEF_SCHEMA["optional"], but we
+# need a deterministic order for assertions.
+BRIEF_FIELD_ORDER = [
+    ("Intention", "do thing"),
+    ("Hypothesis / target", "thing happens"),
+    ("Scope fence", "no expansion"),
+    ("Expected artefacts", "out.txt"),
+    ("Resource budget", "10s"),
+    ("Return trigger", "scripts complete"),
+    ("Mode", "direct"),
+    ("Model", "sonnet"),
+]
+RETURN_FIELD_ORDER = [
+    ("Status", "complete"),
+    ("Verdict", "did the thing"),
+    ("Mechanism / what changed", "wrote a file"),
+    ("Artefacts", "out.txt"),
+    ("Surprises", "none"),
+    ("Resource used", "1s"),
+    ("Suggested next", "n/a"),
+]
 
-VALID_MODES    = {"direct", "supervised", "ingest"}
-VALID_STATUSES = {"complete", "partial"}
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
+def _build(header: str, ordered_fields: list[tuple[str, str]],
+           overrides: dict[str, str], omit: set[str]) -> str:
+    lines = [header, ""]
+    for name, default in ordered_fields:
+        canonical = name.lower()
+        if canonical in omit:
+            continue
+        value = overrides.get(canonical, default)
+        lines.append(f"**{name}:** {value}")
+        lines.append("")
+    return "\n".join(lines)
 
-BRIEF_DIRECT = textwrap.dedent("""\
-    # Brief 001: echo-test
 
-    **Intention:** Write "hello" to output.txt.
+def make_brief(omit: set[str] | None = None, **overrides: str) -> str:
+    return _build("# Brief 999: smoke", BRIEF_FIELD_ORDER,
+                  {k.lower(): v for k, v in overrides.items()}, omit or set())
 
-    **Hypothesis / target:** output.txt contains the string "hello"
 
-    **Scope fence:** Do not touch any file outside the working directory.
+def make_return(omit: set[str] | None = None, **overrides: str) -> str:
+    return _build("# Return 999: smoke", RETURN_FIELD_ORDER,
+                  {k.lower(): v for k, v in overrides.items()}, omit or set())
 
-    **Expected artefacts:** output.txt
 
-    **Resource budget:** 10s
+def write_brief(tmp_path: Path, content: str) -> Path:
+    p = tmp_path / "brief_999_smoke.md"
+    p.write_text(content)
+    return p
 
-    **Return trigger:** Script completes and output.txt is written.
 
-    **Mode:** direct
-""")
+def write_return(tmp_path: Path, content: str) -> Path:
+    p = tmp_path / "return_999_smoke.md"
+    p.write_text(content)
+    return p
 
-BRIEF_SUPERVISED = textwrap.dedent("""\
-    # Brief 002: sleep-test
 
-    **Intention:** Verify the supervised launch pattern works end-to-end.
+# ── Anchor tests: drift between templates and validator's contract ────────────
 
-    **Hypothesis / target:** DONE sentinel appears in log within budget.
+def test_brief_required_fields_match_expectation():
+    assert BRIEF_SCHEMA["required"] == {
+        "intention", "hypothesis / target", "scope fence",
+        "expected artefacts", "resource budget", "return trigger", "mode",
+    }, "templates/brief.md required fields drifted"
 
-    **Scope fence:** No system-level changes. Working dir only.
 
-    **Expected artefacts:** 002_sleep-test.log, 002_sleep-test.pid, 002_sleep-test_job.pid
+def test_return_required_fields_match_expectation():
+    assert RETURN_SCHEMA["required"] == {
+        "status", "verdict", "mechanism / what changed",
+        "artefacts", "surprises", "resource used",
+    }, "templates/return.md required fields drifted"
 
-    **Resource budget:** 30s
 
-    **Return trigger:** Supervisor launched and PID files written.
+def test_brief_optional_fields_match_expectation():
+    assert BRIEF_SCHEMA["optional"] == {"model"}
 
-    **Mode:** supervised
-""")
 
-BRIEF_INGEST = textwrap.dedent("""\
-    # Brief 003: sleep-test-ingest
+def test_return_optional_fields_match_expectation():
+    assert RETURN_SCHEMA["optional"] == {"suggested next"}
 
-    **Intention:** Read completed job artefacts and write substantive return.
 
-    **Hypothesis / target:** Log ends with DONE; result.txt contains expected output.
+def test_valid_modes_match_template_enum():
+    assert BRIEF_SCHEMA["modes"] == {"direct", "supervised", "ingest"}
 
-    **Scope fence:** Read artefacts only — no new process launches.
 
-    **Expected artefacts:** return_002_sleep-test.md (substantive)
+def test_valid_statuses_match_template_enum():
+    assert RETURN_SCHEMA["statuses"] == {"complete", "partial"}
 
-    **Resource budget:** 15s
 
-    **Return trigger:** Return file written with full verdict and mechanism.
+# ── Round-trip: a complete document validates ────────────────────────────────
 
-    **Mode:** ingest
-""")
+@pytest.mark.parametrize("mode", sorted(BRIEF_SCHEMA["modes"]))
+def test_validate_accepts_complete_brief(tmp_path, mode):
+    p = write_brief(tmp_path, make_brief(mode=mode))
+    r = gw("validate", str(p))
+    assert r.returncode == 0, f"stderr: {r.stderr}"
+    assert "OK" in r.stdout
 
-BRIEF_MISSING_FIELDS = textwrap.dedent("""\
-    # Brief 004: broken
 
-    **Intention:** Brief with most required fields absent.
+@pytest.mark.parametrize("status", sorted(RETURN_SCHEMA["statuses"]))
+def test_validate_accepts_complete_return(tmp_path, status):
+    p = write_return(tmp_path, make_return(status=status))
+    r = gw("validate", str(p))
+    assert r.returncode == 0, f"stderr: {r.stderr}"
 
-    **Mode:** direct
-""")
 
-BRIEF_INVALID_MODE = textwrap.dedent("""\
-    # Brief 005: bad-mode
+# ── Mutation: dropping a required field is detected ──────────────────────────
 
-    **Intention:** Brief carrying an unrecognised mode value.
+@pytest.mark.parametrize("field", sorted(BRIEF_SCHEMA["required"]))
+def test_validate_flags_missing_required_brief_field(tmp_path, field):
+    p = write_brief(tmp_path, make_brief(omit={field}))
+    r = gw("validate", str(p))
+    assert r.returncode == 1
+    assert "missing required fields" in r.stderr
+    assert field in r.stderr
 
-    **Hypothesis / target:** N/A
 
-    **Scope fence:** N/A
+@pytest.mark.parametrize("field", sorted(RETURN_SCHEMA["required"]))
+def test_validate_flags_missing_required_return_field(tmp_path, field):
+    p = write_return(tmp_path, make_return(omit={field}))
+    r = gw("validate", str(p))
+    assert r.returncode == 1
+    assert field in r.stderr
 
-    **Expected artefacts:** N/A
 
-    **Resource budget:** 10s
+# ── Optional fields can be omitted ───────────────────────────────────────────
 
-    **Return trigger:** Done.
+@pytest.mark.parametrize("field", sorted(BRIEF_SCHEMA["optional"]))
+def test_validate_accepts_brief_without_optional_field(tmp_path, field):
+    p = write_brief(tmp_path, make_brief(omit={field}))
+    r = gw("validate", str(p))
+    assert r.returncode == 0, r.stderr
 
-    **Mode:** background
-""")
 
-RETURN_COMPLETE = textwrap.dedent("""\
-    # Return 001: echo-test
+@pytest.mark.parametrize("field", sorted(RETURN_SCHEMA["optional"]))
+def test_validate_accepts_return_without_optional_field(tmp_path, field):
+    p = write_return(tmp_path, make_return(omit={field}))
+    r = gw("validate", str(p))
+    assert r.returncode == 0, r.stderr
 
-    **Status:** complete
 
-    **Verdict:** output.txt contains "hello" as expected.
+# ── Enum validation ──────────────────────────────────────────────────────────
 
-    **Mechanism / what changed:** Bash `echo` wrote to file via stdout redirect.
+@pytest.mark.parametrize("bad_mode", ["background", "parallel", "DIRECT", "auto"])
+def test_validate_rejects_invalid_mode(tmp_path, bad_mode):
+    p = write_brief(tmp_path, make_brief(mode=bad_mode))
+    r = gw("validate", str(p))
+    assert r.returncode == 1
+    assert "invalid mode" in r.stderr
 
-    **Artefacts:** output.txt
 
-    **Surprises:** None.
+@pytest.mark.parametrize("bad_status", ["pending", "running", "COMPLETE", "ok"])
+def test_validate_rejects_invalid_status(tmp_path, bad_status):
+    p = write_return(tmp_path, make_return(status=bad_status))
+    r = gw("validate", str(p))
+    assert r.returncode == 1
+    assert "invalid status" in r.stderr
 
-    **Resource used:** 1s
-""")
 
-RETURN_PARTIAL = textwrap.dedent("""\
-    # Return 002: sleep-test
+# ── Behaviour: prefix collisions, inline bold, mechanism rule ────────────────
 
-    **Status:** partial — job launched, awaiting completion
+def test_validate_does_not_alias_mode_to_model(tmp_path):
+    """A brief with **Model:** but no **Mode:** must be flagged as missing Mode."""
+    p = write_brief(tmp_path, make_brief(omit={"mode"}))
+    r = gw("validate", str(p))
+    assert r.returncode == 1
+    assert "mode" in r.stderr
+    # The **Model:** field is still present and should not be confused with Mode.
+    assert "model" not in r.stderr.split("missing required fields:")[1]
 
-    **Verdict:** Supervisor PID 12345; log at iterations/002_sleep-test.log
 
-    **Mechanism / what changed:** n/a — launch only
+def test_validate_ignores_inline_bold_as_field(tmp_path):
+    """Inline **Mode:** mid-paragraph must not be parsed as a field declaration."""
+    brief = make_brief(omit={"mode"})
+    brief += "\nSome prose mentioning **Mode:** inline.\n"
+    p = write_brief(tmp_path, brief)
+    r = gw("validate", str(p))
+    assert r.returncode == 1
+    assert "mode" in r.stderr  # still missing because inline bold doesn't count
 
-    **Artefacts:** 002_sleep-test_work.sh, 002_sleep-test_supervisor.sh, 002_sleep-test.log, 002_sleep-test.pid, 002_sleep-test_job.pid
 
-    **Surprises:** None.
+def test_validate_complete_return_without_mechanism_is_rejected(tmp_path):
+    """templates/return.md: 'Score without mechanism is rejected.'"""
+    p = write_return(tmp_path,
+                     make_return(omit={"mechanism / what changed"}, status="complete"))
+    r = gw("validate", str(p))
+    assert r.returncode == 1
+    assert "mechanism" in r.stderr
 
-    **Resource used:** 3s (launch only)
-""")
 
-RETURN_MISSING_MECHANISM = textwrap.dedent("""\
-    # Return 006: no-mechanism
+# ── Boundary cases ───────────────────────────────────────────────────────────
 
-    **Status:** complete
+def test_validate_missing_file_returns_2(tmp_path):
+    r = gw("validate", str(tmp_path / "nope.md"))
+    assert r.returncode == 2
+    assert "not found" in r.stderr
 
-    **Verdict:** Something happened.
 
-    **Artefacts:** output.txt
+def test_validate_unknown_kind_requires_override(tmp_path):
+    p = tmp_path / "synthesis.md"
+    p.write_text("# Notes\n")
+    r = gw("validate", str(p))
+    assert r.returncode == 2
+    assert "cannot infer kind" in r.stderr
 
-    **Surprises:** None.
 
-    **Resource used:** 5s
-""")
+def test_validate_kind_override_works(tmp_path):
+    p = tmp_path / "synthesis.md"
+    p.write_text(make_brief())
+    r = gw("validate", str(p), "--kind", "brief")
+    assert r.returncode == 0, r.stderr
 
-# ── Brief schema ──────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("content", [BRIEF_DIRECT, BRIEF_SUPERVISED, BRIEF_INGEST],
-                         ids=["direct", "supervised", "ingest"])
-def test_valid_brief_has_all_required_fields(content):
-    present = fields(content)
-    missing = [f for f in BRIEF_REQUIRED if not any(f in p for p in present)]
-    assert not missing, f"Missing fields: {missing}"
+def test_validate_handles_extra_whitespace_in_value(tmp_path):
+    """Model output may use double spaces after the marker — must still parse."""
+    brief = make_brief().replace("**Mode:** direct", "**Mode:**    direct")
+    p = write_brief(tmp_path, brief)
+    r = gw("validate", str(p))
+    assert r.returncode == 0, r.stderr
 
-@pytest.mark.parametrize("content,expected_mode", [
-    (BRIEF_DIRECT,     "direct"),
-    (BRIEF_SUPERVISED, "supervised"),
-    (BRIEF_INGEST,     "ingest"),
-])
-def test_brief_mode_is_valid(content, expected_mode):
-    mode = field_value(content, "Mode")
-    assert mode in VALID_MODES
-    assert mode == expected_mode
 
-def test_brief_missing_fields_detected():
-    present = fields(BRIEF_MISSING_FIELDS)
-    missing = [f for f in BRIEF_REQUIRED if not any(f in p for p in present)]
-    assert len(missing) >= 4, f"Expected several missing fields, only found: {missing}"
-
-def test_brief_invalid_mode_detected():
-    mode = field_value(BRIEF_INVALID_MODE, "Mode")
-    assert mode not in VALID_MODES, f"Expected invalid mode, got: {mode}"
-
-# ── Return schema ─────────────────────────────────────────────────────────────
-
-@pytest.mark.parametrize("content", [RETURN_COMPLETE, RETURN_PARTIAL],
-                         ids=["complete", "partial"])
-def test_valid_return_has_all_required_fields(content):
-    present = fields(content)
-    missing = [f for f in RETURN_REQUIRED if not any(f in p for p in present)]
-    assert not missing, f"Missing fields: {missing}"
-
-@pytest.mark.parametrize("content,expected_status", [
-    (RETURN_COMPLETE, "complete"),
-    (RETURN_PARTIAL,  "partial"),
-])
-def test_return_status_is_valid(content, expected_status):
-    status = field_value(content, "Status")
-    assert status in VALID_STATUSES
-    assert status == expected_status
-
-def test_return_missing_mechanism_detected():
-    present = fields(RETURN_MISSING_MECHANISM)
-    has_mechanism = any("mechanism" in p for p in present)
-    assert not has_mechanism, "Expected mechanism to be absent"
-
-def test_complete_return_without_mechanism_is_invalid():
-    """A complete return must have a mechanism — score without mechanism is rejected."""
-    status = field_value(RETURN_MISSING_MECHANISM, "Status")
-    present = fields(RETURN_MISSING_MECHANISM)
-    has_mechanism = any("mechanism" in p for p in present)
-    assert status == "complete" and not has_mechanism, \
-        "Fixture should represent an invalid complete-without-mechanism return"
+def test_validate_handles_field_name_with_slash(tmp_path):
+    """Hypothesis / target is a real template field — slash must not break parsing."""
+    p = write_brief(tmp_path, make_brief())
+    r = gw("validate", str(p))
+    assert r.returncode == 0, r.stderr
