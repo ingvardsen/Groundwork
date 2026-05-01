@@ -1,21 +1,23 @@
 ---
 name: groundwork-skill
-description: Use when the user wants to run a series of iterative tasks (audits, comparisons, migrations, diagnostics, R&D experiments) where each unit is non-trivial and benefits from a written audit trail. Sets up an architect/engineer split with brief/return files as the filesystem contract — the architect (this session) authors briefs and synthesizes returns; an engineer subagent executes one iteration per turn. Triggers on signals like "run a sweep across X", "compare A vs B over the codebase", "iterate on Y with N variants", "audit Z and produce findings", or any multi-iteration task with ≥3 similar units of ≥5 minutes each.
+description: Use when the user wants decisions, progressions, or findings to outlive the current session — audits, comparisons, migrations, diagnostics, R&D experiments. Sets up an architect/engineer split with brief/return files as the filesystem contract — the architect (this session) authors briefs and synthesizes returns; an engineer subagent executes one iteration per turn. Triggers on signals like "run a sweep across X", "compare A vs B over the codebase", "iterate on Y with N variants", "audit Z and produce findings", or any task where decisions, comparisons, or progress need a durable record across sessions.
 ---
 
 # Groundwork
 
-Architect/engineer split with filesystem-as-contract. Use when iterative work has ≥3 similar units, each ≥5 min of agent time, and you want an audit trail.
+Architect/engineer split with filesystem-as-contract. Use whenever decisions, progressions, or findings need to outlive the current session — sweeps, comparisons, migrations, diagnostics. Time and unit counts are sanity checks on overhead, not the trigger.
 
 ## When to use vs skip
 
 | Use | Skip |
 |---|---|
-| ≥3 similar units coming up | One-off task |
-| Each unit ≥5 min | Each unit <2 min — overhead > benefit |
-| Want an audit trail | Engineer needs frequent architect input mid-flight |
-| Want parallel exploration | Units don't share a shape — no template benefit |
-| Lead session's context window matters | Single contained task you can do inline |
+| Decisions or progressions worth documenting beyond chat | Verbal context is enough; nothing needs to be reconstructed later |
+| Want a written audit trail or shared synthesis doc | One-off with no follow-up and no stakeholder review |
+| Want parallel exploration of variants | Engineer needs frequent architect input mid-flight |
+| Lead session's context window matters | Architect could finish faster inline than briefing it out |
+| Multiple similar units benefit from a template (`≥3` is a useful signal) | Units don't share a shape — no template benefit |
+
+If a unit takes <2 min and isn't decision-bearing, just do it inline — the brief/return overhead isn't repaid.
 
 ## Architecture
 
