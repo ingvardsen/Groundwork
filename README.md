@@ -90,15 +90,15 @@ Start a new session, load the skill, point to the iterations directory. Claude r
 | Pattern | When | How |
 |---------|------|-----|
 | **A — Direct** | Single command, under 30 seconds | Engineer runs inline, writes return immediately |
-| **B — Supervised** | Longer or unbounded work | Engineer writes a work script + supervisor, launches detached, ends turn. Architect monitors the log for a `DONE` / `FAILED` sentinel |
+| **B — Supervised** | Longer or unbounded work | Engineer writes a work script and launches `bin/groundwork supervise` detached, then ends turn. Architect monitors the log for a `DONE` / `FAILED` sentinel |
 
 Kill a running supervised job at any time:
 
 ```bash
-kill $(cat iterations/NNN_slug_job.pid) 2>/dev/null
-kill $(cat iterations/NNN_slug.pid) 2>/dev/null
-echo "KILLED by architect" >> iterations/NNN_slug.log
+bin/groundwork kill iterations/NNN_slug
 ```
+
+This terminates the work and supervisor processes and appends `KILLED by architect` to the log.
 
 ---
 
@@ -125,8 +125,9 @@ See [`tests/`](tests/) for details on individual layers and scenarios.
 | Path | Purpose |
 |------|---------|
 | `SKILL.md` | Full skill specification (Claude reads this) |
+| `bin/groundwork` | CLI: supervisor lifecycle, kill, slot rule, schema validation. `bin/groundwork --help` for the full surface. |
 | `templates/brief.md` | Brief schema |
 | `templates/return.md` | Return schema |
 | `templates/engineer_role.md` | Engineer subagent prompt |
 | `templates/architect_role.md` | Architect subagent prompt (campaign mode) |
-| `tests/` | Infrastructure + schema tests |
+| `tests/` | Infrastructure + schema tests (pytest) |
