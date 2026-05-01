@@ -27,7 +27,7 @@ Architect/engineer split with filesystem-as-contract. Use when iterative work ha
 
 1. Confirm with user:
    - Iterations directory (default: `iterations/`)
-   - Iteration **category** (one of: audit-sweep · comparative-rnd · bulk-migration · diagnostic · long-compute)
+   - Iteration **category** (one of: audit-sweep · comparative-rnd · bulk-migration · diagnostic)
    - Resource budget per iteration (wall-time cap, optional cost cap)
 2. `mkdir -p <iterations-dir>` if it doesn't exist.
 
@@ -61,7 +61,7 @@ The brief is the engineer's complete contract. Self-sufficient — engineer read
 | A — direct | Single Bash call completes in <30s | Bash blocking, foreground spawn |
 | B — supervised | Everything else | Script + supervisor, OS background, Monitor + ingest brief |
 
-Decision is binary: "Can this be done in one Bash call under 30 seconds?" Yes → A. No → D.
+Decision is binary: "Can this be done in one Bash call under 30 seconds?" Yes → A. No → B.
 
 **Pattern A spawn:**
 
@@ -87,7 +87,7 @@ Agent({
 })
 ```
 
-Engineer writes and nohup-launches the scripts then ends its turn quickly. After the engineer returns, set up a Monitor:
+Engineer writes the work script and nohup-launches `groundwork supervise` around it, then ends its turn quickly. After the engineer returns, set up a Monitor:
 
 ```
 Monitor("tail -f <iterations-dir>/NNN_slug.log")
@@ -104,7 +104,7 @@ Harness streams lines and fires a notification on `DONE` or `FAILED:` sentinel. 
 ```
 This terminates the work and supervisor processes and appends `KILLED by architect` to the log.
 
-**Interruption:** load `TaskStop` via ToolSearch to stop the engineer *subagent* only if it is still writing scripts. Once the engineer's turn has ended, the job runs as an OS process — use the kill commands above instead.
+**Interruption:** load `TaskStop` via ToolSearch to stop the engineer *subagent* only if it is still writing scripts. Once the engineer's turn has ended, the job runs as an OS process — use the kill command above instead.
 
 ## File conventions (Pattern B)
 
@@ -112,11 +112,10 @@ This terminates the work and supervisor processes and appends `KILLED by archite
 <iterations-dir>/
   brief_NNN_slug.md
   return_NNN_slug.md        ← partial on supervised launch; substantive after ingest
-  NNN_slug_work.sh
-  NNN_slug_supervisor.sh
+  NNN_slug_work.sh          ← engineer writes; the only script on disk
   NNN_slug.log              ← Monitor target; last line is DONE or FAILED: <reason>
-  NNN_slug.pid              ← supervisor PID
-  NNN_slug_job.pid          ← work script PID (written by supervisor)
+  NNN_slug.pid              ← `groundwork supervise` process PID
+  NNN_slug_job.pid          ← work script PID (written by `groundwork supervise`)
 ```
 
 ## After return ingestion
