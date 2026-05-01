@@ -9,7 +9,9 @@ Sessions end; the audit trail doesn't.
 
 An agent's memory is the conversation. Restart, hit the context limit, hand off to a different expert — the thread is gone. You rebuild from scratch.
 
-Groundwork makes the **filesystem the single source of truth**. Every unit of work gets a brief before it runs and a return when it completes. The conversation becomes disposable. The files are not.
+Complex, multi-step work needs an **audit trail** to navigate: what was tried, what was decided, what came back. Without traceable progress on disk, every iteration drifts and prior reasoning has to be reconstructed from chat scrollback.
+
+Groundwork makes the **filesystem the single source of truth**. Every unit of work gets a brief before it runs and a return when it completes — an append-only record you can re-read, diff, and resume against. The conversation becomes disposable. The trail is not.
 
 ---
 
